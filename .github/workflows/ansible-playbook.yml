@@ -20,6 +20,7 @@ jobs:
 
     - name: Install Ansible 
       run: |
+
         ssh -o StrictHostKeyChecking=no root@${{ vars.SERVER_IP }} 'dnf install -y epel-release && dnf install -y ansible'
       env:
         ANSIBLE_HOST_KEY_CHECKING: 'false'
@@ -29,13 +30,16 @@ jobs:
 
     - name: Run Ansible Playbook
       run: |
+
         ls -lah
         scp -o StrictHostKeyChecking=no ~/.vault_pass root@${{ vars.SERVER_IP }}:~/
         scp -o StrictHostKeyChecking=no -r * root@${{ vars.SERVER_IP }}:/root/
         ssh -o StrictHostKeyChecking=no root@${{ vars.SERVER_IP }} 'ANSIBLE_HOST_KEY_CHECKING=false ansible-playbook /root/playbooks/site.yml --vault-password-file /root/.vault_pass'
+
       env:
         ANSIBLE_HOST_KEY_CHECKING: 'false'
 
     - name: Cleanup Vault Password
       run: ssh -o StrictHostKeyChecking=no root@${{ vars.SERVER_IP }} 'rm -f /root/.vault_pass'
+
 
