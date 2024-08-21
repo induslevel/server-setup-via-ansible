@@ -29,6 +29,7 @@ jobs:
 
     - name: Run Ansible Playbook
       run: |
+        ls -lah
         scp -o StrictHostKeyChecking=no ~/.vault_pass root@${{ secrets.SERVER_IP }}:~/
         scp -o StrictHostKeyChecking=no -r ./ root@${{ secrets.SERVER_IP }}:/root/
         ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} 'ANSIBLE_HOST_KEY_CHECKING=false ansible-playbook /root/playbooks/site.yml --vault-password-file /root/.vault_pass'
