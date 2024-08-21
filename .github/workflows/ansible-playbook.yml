@@ -1,0 +1,40 @@
+name: Run Ansible Playbook 
+
+on:
+  push:
+    branches:
+      - staging # Specify the branch to trigger the action
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest  # This runs on a GitHub-hosted Ubuntu runner, but connects to AlmaLinux
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Install Ansible 
+      run: |
+        ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} 'dnf install -y epel-release && dnf install -y ansible'
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: 'false'
+
+    - name: Create Vault Password File
+      run: echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
+
+    - name: Run Ansible Playbook
+      run: |
+        scp -o StrictHostKeyChecking=no ~/.vault_pass root@${{ secrets.SERVER_IP }}:~/
+        scp -o StrictHostKeyChecking=no -r . root@${{ secrets.SERVER_IP }}:/root/
+        ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} 'ANSIBLE_HOST_KEY_CHECKING=false ansible-playbook /root/playbooks/site.yml --vault-password-file /root/.vault_pass'
+      env:
+        ANSIBLE_HOST_KEY_CHECKING: 'false'
+
+    - name: Cleanup Vault Password
+      run: ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} 'rm -f /root/.vault_pass'
+
