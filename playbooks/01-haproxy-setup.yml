@@ -1,0 +1,98 @@
+---
+- name: Setup HAProxy
+  hosts: "{{ target_hosts | default('all') }}"
+  become: yes
+  vars_files:
+    - ../vars/common_vars.yml
+  tasks:
+    - name: Gather SELinux facts
+      ansible.builtin.setup:
+        filter: ansible_selinux
+
+    - name: Ensure SELinux is permissive if currently enforcing
+      selinux:
+        state: permissive
+        policy: targeted
+      when: ansible_selinux.status == "enforcing"
+
+    - name: Disable SELinux permanently
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=disabled'
+        backup: yes
+
+    - name: Gather all facts
+      setup:
+
+    - name: Find default IP address
+      set_fact:
+        haproxy_bind_ip: "{{ ansible_facts.default_ipv4.address }}"
+
+    - name: Install HAProxy
+      package:
+        name: haproxy
+        state: present
+
+    - name: Configure HAProxy
+      template:
+        src: ../templates/haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+      notify:
+        - Restart HAProxy
+
+    - name: Start HAProxy service
+      service:
+        name: haproxy
+        state: started
+        enabled: yes
+
+    - name: Install firewalld
+      package:
+        name: firewalld
+        state: present
+
+    - name: Start firewalld service
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Allow traffic on port 443
+      firewalld:
+        port: 443/tcp
+        permanent: yes
+        state: enabled
+      register: firewalld_allow_443
+
+    - name: Set default deny policy
+      firewalld:
+        zone: public
+        target: DROP
+        permanent: yes
+        state: enabled
+      register: firewalld_default_deny
+
+    - name: Reload firewalld to apply changes
+      command: firewall-cmd --reload
+      become: yes
+      when: firewalld_allow_443.changed or firewalld_default_deny.changed
+
+    - name: Allow traffic on port 80
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+      register: firewalld_allow_80
+
+    - name: Reload firewalld to apply changes
+      command: firewall-cmd --reload
+      become: yes
+      when: firewalld_allow_80.changed or firewalld_default_deny.changed
+
+  handlers:
+    - name: Restart HAProxy
+      service:
+        name: haproxy
+        state: restarted
+

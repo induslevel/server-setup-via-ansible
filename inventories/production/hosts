@@ -1,0 +1,16 @@
+# ~/ansible/inventories/production/hosts
+
+#[webservers]
+#webserver.induslevel.com
+#webserver2.induslevel.com
+
+#[vpn]
+#eu-vpn.induslevel.com
+
+[local]
+localhost ansible_connection=local
+
+[all:vars]
+ansible_user=root
+ansible_ssh_private_key_file=/root/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'

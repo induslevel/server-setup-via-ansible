@@ -1,0 +1,32 @@
+<IfModule mod_ssl.c>
+<VirtualHost *:80>
+    ServerName {{ item }}
+    DocumentRoot /var/www/{{ item | replace('.', '_') }}
+
+    # Redirect all HTTP requests to HTTPS
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteRule ^ https://%{SERVER_NAME}%{REQUEST_URI} [L,R=301]
+
+    ErrorLog /var/log/httpd/{{ item | replace('.', '_') }}_error.log
+    CustomLog /var/log/httpd/{{ item | replace('.', '_') }}_access.log combined
+</VirtualHost>
+
+<VirtualHost 127.0.0.2:443>
+    ServerName {{ item }}
+    DocumentRoot /var/www/{{ item | replace('.', '_') }}
+
+    <Directory /var/www/{{ item | replace('.', '_') }}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+RemoteIPProxyProtocol On
+    ErrorLog /var/log/httpd/{{ item | replace('.', '_') }}_error.log
+    CustomLog /var/log/httpd/{{ item | replace('.', '_') }}_access.log combined
+
+#    Include /etc/letsencrypt/options-ssl-apache.conf
+    SSLCertificateFile /etc/letsencrypt/live/{{ item }}/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/{{ item }}/privkey.pem
+</VirtualHost>
+</IfModule>
+

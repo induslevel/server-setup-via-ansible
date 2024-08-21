@@ -1,0 +1,9 @@
+[webservers]
+staging-webserver1.example.com
+
+[vpn]
+staging-vpn.example.com
+
+[all:vars]
+ansible_user=your_ssh_user
+ansible_ssh_private_key_file=/path/to/your/private/key

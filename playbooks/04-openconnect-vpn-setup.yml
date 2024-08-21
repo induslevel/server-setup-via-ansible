@@ -1,0 +1,122 @@
+---
+- name: Setup OpenConnect VPN 
+  hosts: "{{ target_hosts | default('all') }}"
+  become: yes
+  vars_files:
+    - ../vars/common_vars.yml  # Adjust the path if needed
+    - ../vars/secrets.yml      # Ensure this path is correct
+
+  tasks:
+
+    - name: Install OpenConnect VPN server and firewalld
+      ansible.builtin.yum:
+        name: 
+          - ocserv
+          - firewalld
+        state: present
+
+    - name: Ensure firewalld is started and enabled
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: Open TCP port 443 in firewalld
+      ansible.builtin.firewalld:
+        port: 443/tcp
+        permanent: yes
+        state: enabled
+      register: tcp_port_443
+
+    - name: Open UDP port 443 in firewalld
+      ansible.builtin.firewalld:
+        port: 443/udp
+        permanent: yes
+        state: enabled
+      register: udp_port_443
+
+    - name: Enable masquerading in firewalld
+      ansible.builtin.firewalld:
+        masquerade: yes
+        permanent: yes
+        state: enabled
+      register: masquerade
+
+    - name: Reload firewalld if there are changes
+      ansible.builtin.command: firewall-cmd --reload
+      become: yes
+      when: tcp_port_443.changed or udp_port_443.changed or masquerade.changed
+
+    - name: Enable IP forwarding in sysctl
+      ansible.builtin.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: no
+      register: ip_forwarding
+
+    - name: Ensure IP forwarding is persistent across reboots
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net.ipv4.ip_forward'
+        line: 'net.ipv4.ip_forward = 1'
+        state: present
+      register: sysctl_conf
+
+    - name: Reload sysctl to apply IP forwarding changes if necessary
+      ansible.builtin.command: sysctl -p
+      become: yes
+      when: ip_forwarding.changed or sysctl_conf.changed
+
+    - name: Deploy ocserv configuration file
+      ansible.builtin.template:
+        src: ../templates/ocserv.conf.j2  # Adjust the path to your template file
+        dest: /etc/ocserv/ocserv.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Check if ocpasswd file exists
+      ansible.builtin.stat:
+        path: /etc/ocserv/ocpasswd
+      register: ocpasswd_file
+
+    - name: Ensure ocpasswd file exists with the correct permissions
+      ansible.builtin.file:
+        path: /etc/ocserv/ocpasswd
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+      when: not ocpasswd_file.stat.exists
+
+    - name: Decrypt VPN user password
+      ansible.builtin.set_fact:
+        decrypted_vpn_user_password: "{{ vpn_user_password }}"
+      no_log: true
+
+    - name: Check if VPN user exists in ocpasswd
+      ansible.builtin.shell: |
+        if grep -q '^vpnuser:' /etc/ocserv/ocpasswd; then
+          echo "User exists"
+        else
+          echo "User does not exist"
+        fi
+      register: user_check
+      changed_when: false
+
+    - name: Create VPN user and add to ocpasswd
+      ansible.builtin.shell: |
+        echo "{{ decrypted_vpn_user_password }}" | ocpasswd -c /etc/ocserv/ocpasswd vpnuser
+      become: yes
+      when: user_check.stdout == "User does not exist"
+      register: ocpasswd_result
+      changed_when: "'password added' in ocpasswd_result.stdout or 'password changed' in ocpasswd_result.stdout"
+      no_log: true
+
+    - name: Ensure ocserv service is started and enabled
+      ansible.builtin.service:
+        name: ocserv
+        state: started
+        enabled: yes
+

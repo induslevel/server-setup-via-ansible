@@ -1,0 +1,77 @@
+global
+    log         127.0.0.1 local2
+
+    chroot      /var/lib/haproxy
+    pidfile     /var/run/haproxy.pid
+    maxconn     4000
+    user        haproxy
+    group       haproxy
+    daemon
+
+defaults
+    mode                    tcp
+    log                     global
+    option                  tcplog
+    option                  dontlognull
+    option http-server-close
+    option                  redispatch
+    retries                 3
+    timeout http-request    10s
+    timeout queue           1m
+    timeout connect         10s
+    timeout client          1m
+    timeout server          1m
+    timeout http-keep-alive 10s
+    timeout check           10s
+    maxconn                 3000
+
+listen stats
+    bind    *:1936
+    mode    http
+    log     global
+    maxconn 10
+
+    timeout connect         4s
+    timeout client          20s
+    timeout server          20s
+
+    stats   enable
+    stats   hide-version
+    stats   refresh         30s
+    stats   show-node
+    stats   show-legends
+    stats   auth            notadmin:securePassword
+    stats   auth            othernotadmin:3xt4aSecurePassword
+    stats   uri             /haproxy?stats
+
+frontend https
+    bind  {{ haproxy_bind_ip }}:443
+    mode tcp
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+
+    acl is_ssh payload(0,7) -m bin 5353482d322e30
+    use_backend ssh if is_ssh
+
+    {% for domain in haproxy_vpn_domains %}
+    acl is_wp_{{ loop.index }} req_ssl_sni -i {{ domain }}
+    use_backend ocserv if is_wp_{{ loop.index }}
+    {% endfor %}
+    
+    default_backend apache
+
+
+backend apache
+    mode tcp
+    option tcp-check
+    server apache 127.0.0.2:443 check send-proxy
+
+backend ocserv
+    mode tcp
+    option ssl-hello-chk
+    server ocserv 127.0.0.1:443 send-proxy-v2
+
+backend ssh
+    mode tcp
+    server ssh-server 127.0.0.1:22 check
+

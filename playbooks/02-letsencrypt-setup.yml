@@ -1,0 +1,205 @@
+---
+- name: Setup Let's Encrypt certificates for HAProxy domains (Apache)
+  hosts: "{{ target_hosts | default('all') }}"
+  become: yes
+  collections:
+    - community.crypto
+  vars_files:
+    - ../vars/common_vars.yml  # Include the variables file
+
+  tasks:
+    - name: Ensure EPEL repository is enabled (required for Certbot)
+      ansible.builtin.yum:
+        name: epel-release
+        state: present
+
+
+    - name: Install firewalld
+      package:
+        name: firewalld
+        state: present
+
+    - name: Start firewalld service
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+
+    - name: Install necessary packages for Let's Encrypt and Apache SSL support
+      ansible.builtin.yum:
+        name: 
+          - certbot
+          - python3-certbot-apache  # This is required by the module
+          - mod_ssl
+          - httpd
+        state: present
+
+
+    - name: Comment out all uncommented lines in welcome.conf
+      ansible.builtin.replace:
+        path: /etc/httpd/conf.d/welcome.conf
+        regexp: '^(?!#)(.*)$'
+        replace: '#\1'
+        backup: yes
+      notify: reload_apache
+
+    - name: Update ssl.conf to listen on 127.0.0.2:443
+      ansible.builtin.lineinfile:
+        path: /etc/httpd/conf.d/ssl.conf
+        regexp: '^Listen 443'
+        line: 'Listen 127.0.0.2:443'
+        backup: yes
+      notify: reload_apache
+
+    - name: Update VirtualHost to listen on 127.0.0.2:443
+      ansible.builtin.lineinfile:
+        path: /etc/httpd/conf.d/ssl.conf
+        regexp: '^<VirtualHost _default_:443>'
+        line: '<VirtualHost 127.0.0.2:443>'
+        backup: yes
+      notify: reload_apache
+
+    - name: Allow port 80 in the firewall if not already allowed
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+      become: yes
+      notify:
+        - Reload_firewalld
+
+    - name: Allow port 443 in the firewall if not already allowed
+      firewalld:
+        port: 443/tcp
+        permanent: yes
+        state: enabled
+      become: yes
+      notify:
+        - Reload_firewalld
+
+    - name: Check if document root exists for haproxy_vpn_domains
+      stat:
+        path: "/var/www/{{ item | replace('.', '_') }}"
+      loop: "{{ haproxy_vpn_domains }}"
+      register: vpn_docroot_check
+
+    - name: Create document root directories for haproxy_vpn_domains if they don't exist
+      file:
+        path: "/var/www/{{ item | replace('.', '_') }}"
+        state: directory
+      loop: "{{ haproxy_vpn_domains }}"
+      when: vpn_docroot_check.results[item_index].stat.exists == false
+      loop_control:
+        index_var: item_index
+
+    - name: Check if document root exists for haproxy_wordpress_domains
+      stat:
+        path: "/var/www/{{ item | replace('.', '_') }}"
+      loop: "{{ haproxy_wordpress_domains }}"
+      register: wordpress_docroot_check
+
+    - name: Create document root directories for haproxy_wordpress_domains if they don't exist
+      file:
+        path: "/var/www/{{ item | replace('.', '_') }}"
+        state: directory
+      loop: "{{ haproxy_wordpress_domains }}"
+      when: wordpress_docroot_check.results[item_index].stat.exists == false
+      loop_control:
+        index_var: item_index
+
+    - name: Start and enable Apache service
+      service:
+        name: httpd
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Check if SSL configuration file already exists for haproxy_wordpress_domains
+      stat:
+        path: "/etc/httpd/conf.d/{{ item | replace('.', '_') }}-le-ssl.conf"
+      loop: "{{ haproxy_wordpress_domains }}"
+      register: ssl_conf_check
+
+    - name: Create Apache conf for haproxy_wordpress_domains using WordPress template
+      template:
+        src: ../templates/wordpress-apache.conf.j2
+        dest: "/etc/httpd/conf.d/{{ item | replace('.', '_') }}.conf"
+      loop: "{{ haproxy_wordpress_domains }}"
+      when: ssl_conf_check.results[item_index].stat.exists == false
+      loop_control:
+        index_var: item_index
+      notify: reload_apache
+
+
+    - name: Create Apache conf for haproxy_vpn_domains using WordPress template
+      template:
+        src: ../templates/wordpress-apache.conf.j2
+        dest: "/etc/httpd/conf.d/{{ item | replace('.', '_') }}.conf"
+      loop: "{{ haproxy_vpn_domains }}"
+      notify: reload_apache
+
+
+    - name: Reload Apache before certbot command 
+      command: systemctl reload httpd
+      register: reload_apache
+      changed_when: "'Reloading Apache' in reload_apache.stdout"
+      failed_when: reload_apache.rc != 0
+      become: yes
+      ignore_errors: no
+
+
+
+    - name: Obtain Let's Encrypt certificates using Certbot for haproxy_vpn_domains
+      command: >
+        certbot-3 certonly --webroot
+        -w /var/www/{{ item | replace('.', '_') }}
+        -d {{ item }}
+        --non-interactive --agree-tos --email {{ letsencrypt_email }} 
+        {% if certbot_dry_run | bool %} --dry-run {% endif %}
+        {% if certbot_staging_cert | bool %} --test-cert {% endif %}
+      loop: "{{ haproxy_vpn_domains }}"
+      register: certbot_result_vpn
+      changed_when: >
+        not certbot_dry_run | bool and
+        'Certificate not yet due for renewal' not in certbot_result_vpn.stdout
+      failed_when: certbot_result_vpn.rc != 0
+
+    - name: Obtain Let's Encrypt certificates using Certbot for haproxy_wordpress_domains
+      command: >
+        certbot-3 certonly --webroot
+        -w /var/www/{{ item | replace('.', '_') }}
+        -d {{ item }}
+        --non-interactive --agree-tos --email {{ letsencrypt_email }} 
+        {% if certbot_dry_run | bool %} --dry-run {% endif %}
+        {% if certbot_staging_cert | bool %} --test-cert {% endif %}
+      loop: "{{ haproxy_wordpress_domains }}"
+      register: certbot_result_wp
+      changed_when: >
+        not certbot_dry_run | bool and
+        'Certificate not yet due for renewal' not in certbot_result_wp.stdout
+      failed_when: certbot_result_wp.rc != 0
+
+
+
+
+
+
+    - name: Update HTTPS configuration files for haproxy_wordpress_domains
+      template:
+        src: ../templates/wordpress-apache-https-redirect.conf.j2
+        dest: "/etc/httpd/conf.d/{{ item | replace('.', '_') }}-le-ssl.conf"
+      loop: "{{ haproxy_wordpress_domains }}"
+      when: not certbot_dry_run | bool
+      notify: reload_apache
+
+  handlers:
+    - name: reload_apache
+      service:
+        name: httpd
+        state: reloaded
+
+    - name: Reload_firewalld
+      command: firewall-cmd --reload
+      become: yes
+

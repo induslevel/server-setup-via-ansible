@@ -1,0 +1,36 @@
+---
+# HAProxy Variables
+haproxy_vpn_domains:
+  - eu-vpn.induslevel.com
+
+haproxy_wordpress_domains:
+  - webserver.induslevel.com
+  - webserver2.induslevel.com
+
+# Let's Encrypt email address
+letsencrypt_email: letsencrypt@induslevel.com
+
+
+# Certbot dry run mode (set to true for dry run, false for production)
+#certbot_dry_run: true  # Change to false for production
+certbot_dry_run: false # Change to false for production
+
+#Get test certificate
+#Change value to false if you want to run for production setup.
+#Keep in mind there are limit for getting certificates so use staing option during testing
+certbot_staging_cert: true
+
+#IPs will be assigned to VPN clients from this subnet
+vpn_ipv4_network: "192.168.250.0/24"  # Replace this with the desired subnet that is not being used in your existing network
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,12 @@
+<VirtualHost *:80>
+    ServerName {{ item }}
+    DocumentRoot /var/www/{{ item | replace('.', '_') }}
+
+    <Directory /var/www/{{ item | replace('.', '_') }}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog /var/log/httpd/{{ item | replace('.', '_') }}_error.log
+    CustomLog /var/log/httpd/{{ item | replace('.', '_') }}_access.log combined
+</VirtualHost>

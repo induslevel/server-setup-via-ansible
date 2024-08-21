@@ -1,0 +1,6 @@
+# site.yml
+- import_playbook: 01-haproxy-setup.yml
+- import_playbook: 02-letsencrypt-setup.yml
+- import_playbook: 03-wordpress-setup.yml
+- import_playbook: 04-openconnect-vpn-setup.yml
+

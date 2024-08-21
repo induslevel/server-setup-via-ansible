@@ -1,0 +1,204 @@
+---
+- name: Setup WordPress for multiple domains
+  hosts: "{{ target_hosts | default('all') }}"
+  become: yes
+  vars_files:
+    - ../vars/common_vars.yml
+    - ../vars/secrets.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    wordpress_tarball_path: /tmp/wordpress-latest.tar.gz  # Path where the tarball will be temporarily stored
+
+  tasks:
+    - name: Check if MariaDB 10.11 module is enabled
+      command: dnf module list mariadb:10.11
+      register: mariadb_module_check
+      failed_when: false
+      changed_when: false
+      become: yes
+
+    - name: Set fact if MariaDB 10.11 module is enabled
+      set_fact:
+        mariadb_module_enabled: "{{ '[e]' in mariadb_module_check.stdout }}"
+      become: yes
+
+    - name: Enable the MariaDB 10.11 module if not already enabled
+      ansible.builtin.dnf:
+        name: mariadb:10.11
+        state: present
+        enabled: yes
+      when: not mariadb_module_enabled
+      become: yes
+
+    - name: Install mariadb-devel with devel repository enabled
+      ansible.builtin.dnf:
+        name: mariadb-devel
+        enablerepo: crb
+        state: present
+
+    - name: Install required packages
+      package:
+        name:
+          - httpd
+          - mariadb-server
+          - pkg-config
+          - python3-pip
+          - python3-devel
+          - gcc
+          - php
+          - php-mysqlnd
+          - php-xml
+          - php-gd
+          - php-mbstring
+          - tar
+          - unzip
+        state: present
+      become: yes
+
+    - name: Install Python MySQL client library (mysqlclient)
+      pip:
+        name: mysqlclient
+        state: present
+        executable: /usr/bin/pip3
+      become: yes
+
+    - name: Start and enable MariaDB service
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+      become: yes
+
+
+
+    - name: Start and enable Apache service
+      service:
+        name: httpd
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Start and enable php-fpm service
+      service:
+        name: php-fpm
+        state: started
+        enabled: yes
+      become: yes
+
+
+
+
+
+    - name: Allow port 80 in the firewall if not already allowed
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+      become: yes
+      notify:
+        - Reload firewalld
+
+    - name: Ensure the web root directory exists
+      file:
+        path: "/var/www/{{ item | replace('.', '_') }}"
+        state: directory
+      loop: "{{ haproxy_wordpress_domains }}"
+
+    - name: Download WordPress tarball
+      get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: "{{ wordpress_tarball_path }}"
+      become: yes
+
+    - name: Copy WordPress tarball to each domain root
+      copy:
+        src: "{{ wordpress_tarball_path }}"
+        dest: "/var/www/{{ item | replace('.', '_') }}/wordpress-latest.tar.gz"
+        remote_src: no
+      loop: "{{ haproxy_wordpress_domains }}"
+
+    - name: Extract WordPress tarball into the document root
+      unarchive:
+        src: "/var/www/{{ item | replace('.', '_') }}/wordpress-latest.tar.gz"
+        dest: "/var/www/{{ item | replace('.', '_') }}/"
+        remote_src: yes
+        extra_opts:
+          - --strip-components=1
+      loop: "{{ haproxy_wordpress_domains }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # Database setup steps for each domain
+    - name: Create databases for each WordPress domain
+      mysql_db:
+        name: "{{ item | replace('.', '_') }}_db"
+        state: present
+        login_user: root
+        login_password: "{{ static_db_password }}"
+      loop: "{{ haproxy_wordpress_domains }}"
+      become: yes
+
+    - name: Create database users and grant privileges for each domain
+      mysql_user:
+        name: "{{ item | replace('.', '_') }}_user"
+        password: "{{ static_db_password }}"
+        priv: "{{ item | replace('.', '_') }}_db.*:ALL"
+        state: present
+        host: "%"
+        login_user: root
+        login_password: "{{ static_db_password }}"
+      loop: "{{ haproxy_wordpress_domains }}"
+      become: yes
+
+    - name: Check if wp-config.php exists for each domain
+      stat:
+        path: "/var/www/{{ item | replace('.', '_') }}/wp-config.php"
+      register: wp_config_stat
+      loop: "{{ haproxy_wordpress_domains }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Set fact for wp-config.php existence
+      set_fact:
+        wp_config_exists: "{{ wp_config_stat.results | selectattr('stat.exists', 'equalto', True) | map(attribute='item') | list }}"
+      
+    - name: Set up WordPress configuration for each domain
+      template:
+        src: ../templates/wordpress.conf.j2
+        dest: "/var/www/{{ item | replace('.', '_') }}/wp-config.php"
+      when: item not in wp_config_exists
+      loop: "{{ haproxy_wordpress_domains }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Configure Apache for each WordPress site
+      template:
+        src: ../templates/wordpress-apache.conf.j2
+        dest: "/etc/httpd/conf.d/{{ item | replace('.', '_') }}.conf"
+      loop: "{{ haproxy_wordpress_domains }}"
+
+#    - name: Reload Apache to apply changes
+#      service:
+#        name: httpd
+#        state: reloaded
+#      become: yes
+
+#    - name: Reload Apache to apply changes
+#      command: systemctl reload httpd
+#      register: reload_apache
+#      failed_when: reload_apache.rc != 0
+#      changed_when: reload_apache.rc == 0
+#      become: yes
+
+    - name: Reload Apache to apply changes
+      command: systemctl reload httpd
+      register: reload_apache
+      changed_when: "'Reloading Apache' in reload_apache.stdout"
+      failed_when: reload_apache.rc != 0
+      become: yes
+      ignore_errors: no
+
+  handlers:
+    - name: Reload firewalld
+      command: firewall-cmd --reload
+      become: yes
