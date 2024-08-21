@@ -1,11 +1,10 @@
 ---
 # HAProxy Variables
 haproxy_vpn_domains:
-  - eu-vpn.induslevel.com
+  - eu-vpn3.induslevel.com
 
 haproxy_wordpress_domains:
-  - webserver.induslevel.com
-  - webserver2.induslevel.com
+  - webserver3.induslevel.com
 
 # Let's Encrypt email address
 letsencrypt_email: letsencrypt@induslevel.com
